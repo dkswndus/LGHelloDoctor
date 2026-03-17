@@ -9,8 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
-# deeplearning 모듈 경로 추가
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'deeplearning'))
+# deeplearning 모듈 경로 추가 (로컬: ../deeplearning, Docker: /app/deeplearning)
+_dl_path = os.path.join(os.path.dirname(__file__), '..', 'deeplearning')
+sys.path.insert(0, _dl_path)
 
 from llm_gpt import generate_triage
 from stt_whisper import transcribe_audio_file
