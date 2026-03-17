@@ -1,13 +1,16 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LG HelloDoctor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;600;700;900&display=swap" />
+  <link rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;600;700;900&display=swap" />
   <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
   <div class="page">
 
@@ -28,15 +31,15 @@
         <div class="record-card">
           <button id="recordBtn" class="record-btn" aria-label="녹음 시작">
             <svg class="mic-svg" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="9" y="2" width="6" height="12" rx="3" fill="white"/>
-              <path d="M5 10a7 7 0 0 0 14 0" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
-              <line x1="12" y1="17" x2="12" y2="21" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
-              <line x1="8" y1="21" x2="16" y2="21" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
+              <rect x="9" y="2" width="6" height="12" rx="3" fill="white" />
+              <path d="M5 10a7 7 0 0 0 14 0" stroke="white" stroke-width="2.2" stroke-linecap="round" />
+              <line x1="12" y1="17" x2="12" y2="21" stroke="white" stroke-width="2.2" stroke-linecap="round" />
+              <line x1="8" y1="21" x2="16" y2="21" stroke="white" stroke-width="2.2" stroke-linecap="round" />
             </svg>
             <span id="recordLabel">말하기</span>
           </button>
           <p id="recordStatus" class="status-text"></p>
-          <p class="record-hint">버튼을 누르고 증상을 말씀해 주세요<br/>다시 누르면 분석을 시작합니다</p>
+          <p class="record-hint">버튼을 누르고 증상을 말씀해 주세요<br />다시 누르면 분석을 시작합니다</p>
         </div>
       </section>
 
@@ -77,7 +80,7 @@
 
         <button id="replayBtn" class="replay-btn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <polygon points="5,3 19,12 5,21" fill="currentColor"/>
+            <polygon points="5,3 19,12 5,21" fill="currentColor" />
           </svg>
           다시 듣기
         </button>
@@ -97,4 +100,5 @@
   <audio id="audioPlayer" hidden></audio>
   <script src="app.js"></script>
 </body>
+
 </html>
