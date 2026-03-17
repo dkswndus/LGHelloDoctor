@@ -27,7 +27,7 @@ def search_nearby_hospitals(
     Raises:
         RuntimeError: API 키 미설정 또는 요청 실패 시
     """
-    api_key = os.getenv("KAKAO_REST_API_KEY")
+    api_key = (os.getenv("KAKAO_REST_API_KEY") or "").strip()
     if not api_key:
         raise RuntimeError(
             "KAKAO_REST_API_KEY가 설정되지 않았습니다. "
