@@ -106,3 +106,25 @@ if __name__ == "__main__":
     import json
     results = search_nearby_hospitals("정형외과", "37.4947", "126.7118")
     print(json.dumps(results, ensure_ascii=False, indent=2))
+
+
+
+
+
+def format_hospital_message(hospitals):
+    """
+    검색된 병원 리스트를 바탕으로 안내 문구를 생성합니다. (app.py 호환용)
+    """
+    if not hospitals:
+        return " 주변에 해당 진료과를 운영하는 병원을 찾지 못했습니다."
+    
+    top_hosp = hospitals[0]
+    msg = f" 가장 가까운 곳은 {top_hosp['distance']} 거리에 있는 {top_hosp['name']}입니다."
+    
+    # 영업시간 정보 추출 로직
+    if top_hosp.get('operating_hours', {}).get('status') == '성공':
+        # 오늘 요일(월요일 등)에 맞는 시간을 가져오는 로직 (임시로 월요일 기준)
+        monday_time = top_hosp['operating_hours']['schedule'].get('월요일', '정보 없음')
+        msg += f" 오늘 진료 시간은 {monday_time}입니다."
+        
+    return msg

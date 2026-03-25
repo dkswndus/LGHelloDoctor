@@ -1,65 +1,43 @@
-from typing import Any, Dict
+import json
+import os
+from groq import Groq
+from dotenv import load_dotenv
+from backend.database.vector_store import SymptomVectorStore # 벡터 DB 불러오기
 
+load_dotenv()
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-SYSTEM_PROMPT = """
-너는 50~80대 한국 사용자 대상 음성 문진을 돕는 AI 어시스턴트이다.
-사용자의 자연스러운 구어체 문장을 입력으로 받아, 아래 JSON 스키마에 맞게만 응답한다.
+# 서버 시작 시 벡터 DB를 한 번만 초기화합니다.
+v_store = SymptomVectorStore()
+v_store.initialize_mapping_data()
 
-응답 형식(JSON):
-{
-  "structured_interview": {
-    "chief_complaint": string,
-    "body_part": string,
-    "symptom_description": string,
-    "onset": string,
-    "duration": string,
-    "severity": string,
-    "other_symptoms": string[]
-  },
-  "recommended_department": string,
-  "assistant_message": string,
-  "followup_questions": string[]
-}
+def generate_triage(transcript: str):
+    # 1단계: 벡터 DB에서 유사한 증상을 먼저 찾습니다.
+    db_result = v_store.search_similar_symptom(transcript)
+    
+    # DB에서 찾은 정보를 프롬프트에 넣을 텍스트로 준비합니다.
+    mapping_context = "검색된 유사 증상 정보 없음"
+    if db_result and "medical_term" in db_result:
+        mapping_context = f"유사 증상: {db_result['medical_term']}, 권장 진료과: {db_result['recommended_department']}"
 
-- 의료 진단/확정적인 표현은 피하고, "필요할 수 있습니다", "의료진 상담이 필요합니다"와 같이 안내 위주로 표현한다.
-- assistant_message는 증상 공감 + 권장 진료과 안내만 담는다. 병원 정보는 포함하지 않는다.
-- 반드시 위 JSON 형태로만, 한국어 내용을 채워서 응답한다.
-"""
-
-
-def generate_triage(transcript: str) -> Dict[str, Any]:
+    # 2단계: LLM 프롬프트 구성 (매핑 테이블을 직접 넣지 않고 DB 결과를 참조하게 함)
+    system_prompt = f"""
+    당신은 고령층 대상 음성 문진 어시스턴트입니다. 
+    반드시 JSON 형식으로만 응답하며, 아래 제공된 '참조 정보'를 최우선으로 고려하여 진료과를 추천하세요.
+    
+    [참조 정보]
+    {mapping_context}
+    
+    응답 스키마는 'structured_interview', 'recommended_department', 'assistant_message'를 포함해야 합니다.
     """
-    사용자의 발화 텍스트를 받아 문진 구조화와 안내 메시지를 생성한다.
-    Groq API (llama-3.3-70b)를 사용한다.
-    """
-    from groq import Groq
-    from dotenv import load_dotenv
-    import os
-    import json
-
-    load_dotenv()
-
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY is not set in environment variables.")
-
-    client = Groq(api_key=api_key)
-
-    user_prompt = f"사용자 발화: \"{transcript.strip()}\"\n\n위 발화를 분석하여 지정된 JSON 스키마에 맞는 단일 JSON 객체만 반환하세요."
 
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": transcript}
         ],
-        response_format={"type": "json_object"},
+        response_format={"type": "json_object"}
     )
-
-    content = response.choices[0].message.content or ""
-    if not content:
-        raise RuntimeError("Groq 응답이 비어 있습니다.")
-
-    return json.loads(content)
-
-
+    
+    return json.loads(response.choices[0].message.content)
