@@ -1,90 +1,108 @@
 import os
+import re
 import requests
-from typing import Optional
+import xml.etree.ElementTree as ET
+from dotenv import load_dotenv
 
+load_dotenv()
+KAKAO_KEY = os.getenv("KAKAO_REST_API_KEY")
+NMC_KEY = os.getenv("HIRA_SERVICE_KEY") 
 
-def search_nearby_hospitals(
-    department: str,
-    latitude: float,
-    longitude: float,
-    radius: int = 3000,
-    max_results: int = 1,
-) -> list[dict]:
-    """
-    카카오 로컬 키워드 검색 API로 근처 병원을 검색한다.
+def normalize_hospital_name(name):
+    name = name.replace(" ", "")
+    name = re.sub(r'(의원|병원|종합병원|의료원)$', '', name)
+    return name
 
-    Args:
-        department: 진료과 (예: "정형외과", "내과")
-        latitude: 사용자 위도
-        longitude: 사용자 경도
-        radius: 검색 반경 (미터, 최대 20000)
-        max_results: 반환할 최대 병원 수
+def format_time(time_str):
+    """4자리 숫자(0900)를 시간 형식(09:00)으로 변환합니다."""
+    if not time_str or len(time_str) != 4:
+        return "휴진"
+    return f"{time_str[:2]}:{time_str[2:]}"
 
-    Returns:
-        병원 정보 딕셔너리 리스트
-        [{"name": ..., "address": ..., "phone_number": ..., "distance_m": ...}]
+def get_nmc_operating_hours(hospital_name):
+    base_url = "http://apis.data.go.kr/B552657/HsptlAsembySearchService/getHsptlMdcncListInfoInqire"
+    
+    try:
+        request_url = f"{base_url}?ServiceKey={NMC_KEY}&QN={hospital_name}&pageNo=1&numOfRows=10"
+        response = requests.get(request_url, timeout=5)
+        
+        if response.status_code == 200:
+            root = ET.fromstring(response.content)
+            items = root.findall('.//item')
+            search_keyword = normalize_hospital_name(hospital_name)
+            
+            for item in items:
+                api_hosp_name = item.findtext('dutyName')
+                if not api_hosp_name:
+                    continue
+                
+                normalized_api_name = normalize_hospital_name(api_hosp_name)
+                
+                if search_keyword in normalized_api_name or normalized_api_name in search_keyword:
+                    hours = {}
+                    days_map = {
+                        '1': '월요일', '2': '화요일', '3': '수요일',
+                        '4': '목요일', '5': '금요일', '6': '토요일',
+                        '7': '일요일', '8': '공휴일'
+                    }
+                    
+                    # 1(월요일)부터 8(공휴일)까지 반복하며 데이터 추출
+                    for i in range(1, 9):
+                        start = item.findtext(f'dutyTime{i}s')
+                        close = item.findtext(f'dutyTime{i}c')
+                        
+                        if start and close:
+                            hours[days_map[str(i)]] = f"{format_time(start)} ~ {format_time(close)}"
+                        else:
+                            hours[days_map[str(i)]] = "휴진"
+                            
+                    # 점심시간 및 기타 특이사항 추출
+                    duty_inf = item.findtext('dutyInf')
+                    hours['특이사항'] = duty_inf if duty_inf else "정보 없음"
+                    
+                    return {
+                        "status": "성공",
+                        "schedule": hours
+                    }
+            
+            return {"status": "이름이 일치하는 병원을 공공데이터에서 찾을 수 없음"}
+            
+        return {"status": f"API 호출 실패 (상태 코드: {response.status_code})"}
+        
+    except Exception as e:
+        return {"status": f"API 연동 에러: {str(e)}"}
 
-    Raises:
-        RuntimeError: API 키 미설정 또는 요청 실패 시
-    """
-    api_key = (os.getenv("KAKAO_REST_API_KEY") or "").strip()
-    if not api_key:
-        raise RuntimeError(
-            "KAKAO_REST_API_KEY가 설정되지 않았습니다. "
-            ".env 파일에 KAKAO_REST_API_KEY=<키> 를 추가하세요. "
-            "카카오 개발자 콘솔(developers.kakao.com)에서 REST API 키를 발급받을 수 있습니다."
-        )
-
+def search_nearby_hospitals(department, lat, lng, radius=2000):
     url = "https://dapi.kakao.com/v2/local/search/keyword.json"
-    headers = {"Authorization": f"KakaoAK {api_key}"}
+    headers = {"Authorization": f"KakaoAK {KAKAO_KEY}"}
     params = {
         "query": department,
-        "x": longitude,   # 카카오 API: x=경도, y=위도
-        "y": latitude,
-        "radius": radius,
-        "size": max_results,
-        "sort": "distance",
+        "y": lat,
+        "x": lng,
+        "radius": radius
     }
-
-    try:
-        response = requests.get(url, headers=headers, params=params, timeout=5)
-        response.raise_for_status()
-    except requests.RequestException as e:
-        raise RuntimeError(f"카카오 병원 검색 요청 실패: {e}") from e
-
-    documents = response.json().get("documents", [])
-
-    results = []
-    for doc in documents:
-        distance_m = int(doc.get("distance") or 0)
-        results.append(
-            {
-                "name": doc.get("place_name", ""),
-                "address": doc.get("road_address_name") or doc.get("address_name", ""),
-                "phone_number": doc.get("phone", ""),
-                "distance_m": distance_m,
+    
+    response = requests.get(url, headers=headers, params=params)
+    hospitals = []
+    
+    if response.status_code == 200:
+        documents = response.json().get('documents', [])
+        
+        for doc in documents[:3]:
+            hosp_name = doc['place_name']
+            
+            hospital_info = {
+                "name": hosp_name,
+                "address": doc['road_address_name'] or doc['address_name'],
+                "phone": doc['phone'],
+                "distance": f"{doc['distance']}m",
+                "operating_hours": get_nmc_operating_hours(hosp_name)
             }
-        )
-    return results
+            hospitals.append(hospital_info)
+            
+    return hospitals
 
-
-def format_hospital_message(hospitals: list[dict]) -> str:
-    """
-    병원 리스트를 TTS용 안내 문장으로 변환한다.
-
-    Example:
-        "집 근처 정형외과 병원은 연세정형외과의원입니다. 주소는 서울시 강남구 ...이고, 전화번호는 02-123-4567입니다."
-    """
-    if not hospitals:
-        return ""
-
-    h = hospitals[0]
-    parts = [f"집 근처 병원은 {h['name']}입니다."]
-    if h["address"]:
-        parts.append(f"주소는 {h['address']}이고,")
-    if h["phone_number"]:
-        parts.append(f"전화번호는 {h['phone_number']}입니다.")
-    else:
-        parts.append("전화번호 정보는 없습니다.")
-
-    return " ".join(parts)
+if __name__ == "__main__":
+    import json
+    results = search_nearby_hospitals("정형외과", "37.4947", "126.7118")
+    print(json.dumps(results, ensure_ascii=False, indent=2))
