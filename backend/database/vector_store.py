@@ -1,11 +1,12 @@
 import os
+import json
 import chromadb
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 
-# 거리 기반 3단계 판단 임계값 (코사인 거리: 0=동일, 1=완전 반대)
-THRESHOLD_CLEAR    = 0.4  # 0.0 ~ 0.4: 확실한 의료 질문
-THRESHOLD_AMBIGUOUS = 0.6  # 0.4 ~ 0.6: 모호한 질문 → 재질문 유도
-                            # 0.6 초과: 의료 무관 질문 → 기각
+# 거리 기반 3단계 판단 임계값 (짧은 문장도 통과하도록 기준 완화)
+THRESHOLD_CLEAR    = 0.55  # 0.0 ~ 0.55: 확실한 의료 질문
+THRESHOLD_AMBIGUOUS = 0.7  # 0.55 ~ 0.7: 모호한 질문 → 재질문 유도
+                            # 0.7 초과: 의료 무관 질문 → 기각
 
 TOP_K = 5  # 후보 반환 개수
 
@@ -15,38 +16,48 @@ class SymptomVectorStore:
         self.client = chromadb.Client()
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
-            metadata={"hnsw:space": "cosine"}  # L2 → cosine 거리로 변경
+            metadata={"hnsw:space": "cosine"}
         )
-        self.embedder = SentenceTransformer(r'C:\Users\isabe\LGHelloDoctor\deeplearning\models\ko-medical-sroberta')
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        model_path = os.path.join(base_dir, "deeplearning", "models", "ko-medical-sroberta")
+        
+        # 3단계: 초기 검색용 Bi-Encoder
+        self.embedder = SentenceTransformer(model_path)
+        
+        # 4단계: 순위 재배열용 Cross-Encoder (한국어 문장 유사도 특화 모델)
+        self.cross_encoder = CrossEncoder("bongsoo/albert-small-kor-cross-encoder-v1")
 
     def initialize_mapping_data(self):
-        symptoms = [
-            "쿡쿡 쑤셔요", "바늘로 찌르는 것 같아요",
-            "찌릿찌릿해요", "전기가 통하는 것 같아요",
-            "뻐근해요", "묵직해요", "뭉친 것 같아요"
-        ]
-        metadatas = [
-            {"medical_term": "자통", "recommended_department": "정형외과, 신경과"},
-            {"medical_term": "자통", "recommended_department": "정형외과, 신경과"},
-            {"medical_term": "방사통", "recommended_department": "신경외과, 재활의학과"},
-            {"medical_term": "방사통", "recommended_department": "신경외과, 재활의학과"},
-            {"medical_term": "근육통", "recommended_department": "정형외과, 재활의학과"},
-            {"medical_term": "근육통", "recommended_department": "정형외과, 재활의학과"},
-            {"medical_term": "근육통", "recommended_department": "정형외과, 재활의학과"}
-        ]
-        ids = [f"symptom_{i}" for i in range(len(symptoms))]
+        # 파인튜닝에 사용했던 750개짜리 JSON 데이터 경로 동적 로드
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        data_path = os.path.join(base_dir, "deeplearning", "training_data.json")
+
+        # JSON 파일 읽기
+        with open(data_path, "r", encoding="utf-8") as f:
+            dataset = json.load(f)
+
+        symptoms = []
+        metadatas = []
+        ids = []
+
+        # JSON 데이터 파싱해서 리스트에 담기
+        for i, item in enumerate(dataset):
+            symptoms.append(item["colloquial"])  # 구어체 증상
+            metadatas.append({
+                "medical_term": item["medical_term"],          # 의학 용어
+                "recommended_department": item["department"]   # 진료과
+            })
+            ids.append(f"symptom_full_{i}")
+
+        # 일괄 임베딩 후 벡터 DB에 삽입 (데이터가 많아 수십 초 정도 걸릴 수 있음)
         embeddings = self.embedder.encode(symptoms).tolist()
         self.collection.add(documents=symptoms, embeddings=embeddings, metadatas=metadatas, ids=ids)
 
     def search_similar_symptom(self, user_input):
         """
-        코사인 거리 기반 Top-K 검색 후 3단계 판단을 반환합니다.
-
-        반환값:
-          - status="clear"    : 확실한 의료 질문 (거리 < 0.4), top5 후보 포함
-          - status="ambiguous": 모호한 질문 (0.4 <= 거리 < 0.6)
-          - status="rejected" : 의료 무관 질문 (거리 >= 0.6)
+        1차 Bi-Encoder 검색 후, 2차 Cross-Encoder로 순위를 재배열하여 판단 반환.
         """
+        # 3단계: Bi-Encoder 검색 (빠르게 Top-K 추출)
         query_embedding = self.embedder.encode([user_input]).tolist()
         n = min(TOP_K, self.collection.count())
         results = self.collection.query(query_embeddings=query_embedding, n_results=n)
@@ -54,24 +65,33 @@ class SymptomVectorStore:
         if not results['distances'] or not results['distances'][0]:
             return {"status": "rejected"}
 
-        best_distance = results['distances'][0][0]
+        # 4단계: Cross-Encoder 리랭킹
+        candidates = []
+        # [사용자 입력, 검색된 후보 문장] 쌍으로 묶기
+        cross_inp = [[user_input, doc] for doc in results['documents'][0]]
+        
+        # Cross-Encoder로 정밀 유사도 점수 산출
+        cross_scores = self.cross_encoder.predict(cross_inp)
 
-        # Top-K 후보 목록 구성
-        candidates = [
-            {
+        for i in range(len(results['distances'][0])):
+            candidates.append({
                 "document": results['documents'][0][i],
-                "distance": results['distances'][0][i],
+                "bi_distance": results['distances'][0][i], 
+                "cross_score": float(cross_scores[i]), # Cross-Encoder 점수
                 **results['metadatas'][0][i]
-            }
-            for i in range(len(results['distances'][0]))
-        ]
+            })
+
+        # Cross-Encoder 점수가 높은 순으로 리스트 정렬 (재배열)
+        candidates = sorted(candidates, key=lambda x: x["cross_score"], reverse=True)
+
+        # 1등으로 올라온 후보의 원래 거리(Bi-distance)를 기준으로 상태 판단
+        best_distance = candidates[0]["bi_distance"]
 
         if best_distance < THRESHOLD_CLEAR:
             return {
                 "status": "clear",
                 "best_distance": best_distance,
                 "top_candidates": candidates,
-                # 하위 호환: 기존 llm_gpt.py가 바로 쓸 수 있도록 1위 결과도 포함
                 "medical_term": candidates[0]["medical_term"],
                 "recommended_department": candidates[0]["recommended_department"],
             }

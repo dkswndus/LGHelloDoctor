@@ -4,8 +4,10 @@ Step 2: ko-sroberta-multitask 위에 Contrastive Learning 파인튜닝
 입력: deeplearning/training_data.json
 출력: deeplearning/models/ko-medical-sroberta/
 """
+
 import json
 import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 import math
 from torch.utils.data import DataLoader
 from sentence_transformers import SentenceTransformer, InputExample, losses, evaluation

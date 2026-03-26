@@ -8,3 +8,10 @@ __pycache__/
 .DS_Store
 .pytest_cache/
 deeplearning/models/
+
+*.safetensors
+*.bin
+
+# 데이터베이스
+*.db
+chroma/
