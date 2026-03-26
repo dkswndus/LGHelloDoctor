@@ -11,7 +11,9 @@ from dotenv import load_dotenv
 
 # deeplearning 모듈 경로 추가 (로컬: ../deeplearning, Docker: /app/deeplearning)
 _dl_path = os.path.join(os.path.dirname(__file__), '..', 'deeplearning')
+_backend_path = os.path.dirname(__file__)
 sys.path.insert(0, _dl_path)
+sys.path.insert(0, _backend_path)
 
 from llm_gpt import generate_triage
 from stt_whisper import transcribe_audio_file
