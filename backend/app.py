@@ -56,19 +56,33 @@ async def analyze_audio(
         # 2. Groq 문진 구조화
         triage: Dict[str, Any] = generate_triage(transcript)
 
-        # 3. 근처 병원 검색 (위치 정보가 있을 때만)
+        # 3. 응급 상황이면 병원 검색 없이 즉시 119 안내
+        assistant_message = triage.get("assistant_message", "")
+        if triage.get("is_emergency"):
+            return JSONResponse(
+                _build_response_payload(
+                    transcript=transcript,
+                    triage=triage,
+                    assistant_message="지금 즉시 119에 신고하세요!",
+                )
+            )
+
+        # 4. 근처 병원 검색 (위치 정보가 있을 때만)
         hospital_message = ""
         hospitals = []
         if latitude is not None and longitude is not None:
-            department = triage.get("recommended_department", "")
+            raw_dept = triage.get("recommended_department", "")
+            if isinstance(raw_dept, list):
+                department = raw_dept[0].strip() if raw_dept else ""
+            else:
+                department = str(raw_dept).split(",")[0].strip()
             try:
                 hospitals = search_nearby_hospitals(department, latitude, longitude)
                 hospital_message = format_hospital_message(hospitals)
             except RuntimeError as e:
                 triage["hospital_search_error"] = str(e)
 
-        # 4. 최종 안내 문장 = LLM 메시지 + 실제 병원 정보
-        assistant_message = triage.get("assistant_message", "")
+        # 5. 최종 안내 문장 = LLM 메시지 + 실제 병원 정보
         if hospital_message:
             assistant_message = f"{assistant_message} {hospital_message}"
 

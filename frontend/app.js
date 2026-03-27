@@ -1,4 +1,4 @@
-const BACKEND_URL = "https://lghellodoctor-production.up.railway.app";
+const BACKEND_URL = "http://localhost:8000";
 
 let mediaRecorder = null;
 let audioChunks = [];

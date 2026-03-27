@@ -1,7 +1,9 @@
 import os
 import re
+import asyncio
 import requests
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -81,25 +83,33 @@ def search_nearby_hospitals(department, lat, lng, radius=2000):
         "x": lng,
         "radius": radius
     }
-    
+
     response = requests.get(url, headers=headers, params=params)
-    hospitals = []
-    
-    if response.status_code == 200:
-        documents = response.json().get('documents', [])
-        
-        for doc in documents[:3]:
-            hosp_name = doc['place_name']
-            
-            hospital_info = {
-                "name": hosp_name,
-                "address": doc['road_address_name'] or doc['address_name'],
-                "phone": doc['phone'],
-                "distance": f"{doc['distance']}m",
-                "operating_hours": get_nmc_operating_hours(hosp_name)
-            }
-            hospitals.append(hospital_info)
-            
+    if response.status_code != 200:
+        return []
+
+    documents = response.json().get('documents', [])[:3]
+    if not documents:
+        return []
+
+    # NMC API를 3곳 동시에 병렬 호출
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        operating_hours_list = list(executor.map(
+            lambda doc: get_nmc_operating_hours(doc['place_name']),
+            documents
+        ))
+
+    hospitals = [
+        {
+            "name": doc['place_name'],
+            "address": doc['road_address_name'] or doc['address_name'],
+            "phone": doc['phone'],
+            "distance": f"{doc['distance']}m",
+            "operating_hours": hours,
+        }
+        for doc, hours in zip(documents, operating_hours_list)
+    ]
+
     return hospitals
 
 if __name__ == "__main__":
@@ -118,13 +128,26 @@ def format_hospital_message(hospitals):
     if not hospitals:
         return " 주변에 해당 진료과를 운영하는 병원을 찾지 못했습니다."
     
+    from datetime import datetime
+    day_map = {0: '월요일', 1: '화요일', 2: '수요일', 3: '목요일', 4: '금요일', 5: '토요일', 6: '일요일'}
+    today = day_map[datetime.now().weekday()]
+
+    # 오늘 진료 가능한 병원 찾기
+    for hosp in hospitals:
+        schedule = hosp.get('operating_hours', {})
+        if schedule.get('status') == '성공':
+            today_time = schedule.get('schedule', {}).get(today, '휴진')
+            if today_time == '휴진':
+                continue
+            msg = f" 가장 가까운 곳은 {hosp['distance']} 거리에 있는 {hosp['name']}입니다."
+            msg += f" 오늘({today}) 진료 시간은 {today_time}입니다."
+            return msg
+        else:
+            # 영업시간 정보 없어도 병원 위치는 안내
+            msg = f" 가장 가까운 곳은 {hosp['distance']} 거리에 있는 {hosp['name']}입니다."
+            msg += f" 전화({hosp['phone']})로 진료 시간을 확인해보세요." if hosp.get('phone') else ""
+            return msg
+
+    # 모든 병원이 오늘 휴진인 경우
     top_hosp = hospitals[0]
-    msg = f" 가장 가까운 곳은 {top_hosp['distance']} 거리에 있는 {top_hosp['name']}입니다."
-    
-    # 영업시간 정보 추출 로직
-    if top_hosp.get('operating_hours', {}).get('status') == '성공':
-        # 오늘 요일(월요일 등)에 맞는 시간을 가져오는 로직 (임시로 월요일 기준)
-        monday_time = top_hosp['operating_hours']['schedule'].get('월요일', '정보 없음')
-        msg += f" 오늘 진료 시간은 {monday_time}입니다."
-        
-    return msg
+    return f" 주변 병원({top_hosp['name']} 등)이 오늘({today}) 모두 휴진입니다. 응급실을 이용하시거나 내일 방문하세요."

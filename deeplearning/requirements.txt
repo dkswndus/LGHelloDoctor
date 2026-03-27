@@ -1,3 +1,0 @@
-torch
-openai-whisper
-gtts

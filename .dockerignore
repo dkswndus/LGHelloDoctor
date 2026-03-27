@@ -1,7 +1,0 @@
-.env
-myenv/
-.venv/
-__pycache__/
-*.pyc
-frontend/
-*.mp3
